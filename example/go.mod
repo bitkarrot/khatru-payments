@@ -1,6 +1,6 @@
 module github.com/bitkarrot/khatru-payments/example
 
-go 1.21.4
+go 1.23.0
 
 require (
 	github.com/bitkarrot/khatru-payments v0.1.0
@@ -33,8 +33,8 @@ require (
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.51.0 // indirect
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d // indirect
-	golang.org/x/net v0.18.0 // indirect
-	golang.org/x/sys v0.20.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
+	golang.org/x/sys v0.31.0 // indirect
 )
 
 replace github.com/bitkarrot/khatru-payments => ../
