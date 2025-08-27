@@ -193,7 +193,7 @@ func (s *System) HasAccess(pubkey string) bool {
 
 // CreateInvoice creates an invoice for a pubkey
 func (s *System) CreateInvoice(ctx context.Context, pubkey string) (*Invoice, error) {
-	description := fmt.Sprintf("WoT Relay Access - pubkey:%s", pubkey)
+	description := fmt.Sprintf("Trusted Relay Access - pubkey:%s", pubkey)
 
 	return s.provider.CreateInvoice(
 		ctx,
@@ -238,7 +238,7 @@ func (s *System) RejectEventHandler(ctx context.Context, event *nostr.Event) (bo
 
 	// Check if there are any existing payments for this pubkey that might have been paid
 	log.Printf("🔍 Checking for existing payments for pubkey: %s...", event.PubKey[:16])
-	
+
 	// For ZBD provider, check stored payment hashes for this specific pubkey
 	if zbdProvider, ok := s.provider.(*ZBDProvider); ok {
 		zbdProvider.mu.RLock()

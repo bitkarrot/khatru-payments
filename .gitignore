@@ -4,3 +4,4 @@ test-client
 example/data
 example/*.txt
 data*
+*.json

@@ -190,15 +190,40 @@ func testPaymentFlow() {
 var testSK string
 var testPK string
 
+// loadOrCreateKeypair loads keypair from file or creates new one
+func loadOrCreateKeypair() {
+	const keypairFile = "test-keypair.txt"
+	
+	// Try to load existing keypair
+	if data, err := ioutil.ReadFile(keypairFile); err == nil {
+		lines := strings.Split(string(data), "\n")
+		if len(lines) >= 2 {
+			testSK = strings.TrimSpace(lines[0])
+			testPK = strings.TrimSpace(lines[1])
+			fmt.Printf("  📁 Loaded existing keypair from %s\n", keypairFile)
+			return
+		}
+	}
+	
+	// Generate new keypair if file doesn't exist or is invalid
+	testSK = generatePrivateKey()
+	testPK, _ = nostr.GetPublicKey(testSK)
+	
+	// Save to file
+	keypairData := fmt.Sprintf("%s\n%s\n", testSK, testPK)
+	if err := ioutil.WriteFile(keypairFile, []byte(keypairData), 0600); err != nil {
+		log.Printf("⚠️ Failed to save keypair to file: %v", err)
+	} else {
+		fmt.Printf("  💾 Saved new keypair to %s\n", keypairFile)
+	}
+}
+
 // connectAndTest connects to the relay and sends a test event
 func connectAndTest() {
 	fmt.Println("🔗 Connecting to relay and testing...")
 
-	// Generate or reuse test keypair
-	if testSK == "" {
-		testSK = generatePrivateKey()
-		testPK, _ = nostr.GetPublicKey(testSK)
-	}
+	// Load or create persistent keypair
+	loadOrCreateKeypair()
 
 	npub, _ := nip19.EncodePublicKey(testPK)
 	fmt.Printf("  Test pubkey: %s\n", npub)
@@ -358,7 +383,20 @@ func generatePrivateKey() string {
 
 // extractInvoiceFromError extracts Lightning invoice from error message
 func extractInvoiceFromError(errorMsg string) string {
-	// Look for Lightning invoice pattern (starts with ln)
+	// First try to parse as JSON if it contains invoice field
+	if strings.Contains(errorMsg, `"invoice":`) {
+		// Find the JSON part after "blocked: "
+		jsonStart := strings.Index(errorMsg, "{")
+		if jsonStart != -1 {
+			jsonStr := errorMsg[jsonStart:]
+			var paymentReq PaymentRequest
+			if err := json.Unmarshal([]byte(jsonStr), &paymentReq); err == nil {
+				return paymentReq.Invoice
+			}
+		}
+	}
+	
+	// Fallback: Look for Lightning invoice pattern (starts with ln)
 	parts := strings.Fields(errorMsg)
 	for _, part := range parts {
 		if strings.HasPrefix(part, "ln") && len(part) > 50 {
