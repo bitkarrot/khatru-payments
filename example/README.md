@@ -1,5 +1,7 @@
 # Khatru Payments Example
 
+TODO: NOTE - Go back and test phoenixd on testnet3
+
 Build the Relay
 
 ```sh
