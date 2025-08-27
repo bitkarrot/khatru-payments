@@ -1,0 +1,11 @@
+{
+  "members": {
+    "07746f283d2d9ea2c589272bee893e364ddb18f21ddd31efdcfbefd56b5c6d91": {
+      "pubkey": "07746f283d2d9ea2c589272bee893e364ddb18f21ddd31efdcfbefd56b5c6d91",
+      "payment_hash": "ac6772f6a6ece504803872290331754b0d6230431eba15852f3980df0b6e9dc6",
+      "expires_at": "2025-09-27T00:34:54.729995-07:00",
+      "created_at": "2025-08-27T00:34:54.729996-07:00",
+      "amount": 21000
+    }
+  }
+}

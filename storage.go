@@ -67,15 +67,20 @@ func (pas *PaidAccessStorage) Load() error {
 
 // Save writes paid access data to file
 func (pas *PaidAccessStorage) Save() error {
-	pas.mutex.RLock()
-	defer pas.mutex.RUnlock()
-
+	// Don't use RLock here since AddPaidAccess already has Lock
 	data, err := json.MarshalIndent(pas, "", "  ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal paid access data: %w", err)
 	}
 
-	return ioutil.WriteFile(pas.filePath, data, 0644)
+	log.Printf("💾 Saving paid access data to: %s", pas.filePath)
+	err = ioutil.WriteFile(pas.filePath, data, 0644)
+	if err != nil {
+		log.Printf("❌ Failed to write paid access file: %v", err)
+		return err
+	}
+	log.Printf("✅ Successfully saved paid access data")
+	return nil
 }
 
 // AddPaidAccess adds a new paid access member

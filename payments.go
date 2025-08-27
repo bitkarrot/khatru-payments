@@ -100,19 +100,22 @@ func New(config Config) (*System, error) {
 	// Parse access duration
 	accessDuration := calculateExpirationTime(config.AccessDuration).Sub(time.Now())
 
+	// Initialize storage first
+	paidAccessStorage := NewPaidAccessStorage(config.PaidAccessFile)
+	chargeMappingStorage := NewChargeMappingStorage(config.ChargeMappingFile)
+
 	// Initialize provider
 	var provider PaymentProvider
 	var err error
-
 	switch config.Provider {
 	case "zbd":
 		if config.ZBDAPIKey == "" {
-			return nil, fmt.Errorf("ZBD_API_KEY required for ZBD provider")
+			return nil, fmt.Errorf("ZBD_API_KEY required for zbd provider")
 		}
 		if config.LightningAddress == "" {
-			return nil, fmt.Errorf("LIGHTNING_ADDRESS required for ZBD provider")
+			return nil, fmt.Errorf("LIGHTNING_ADDRESS required for zbd provider")
 		}
-		provider, err = NewZBDProvider(config.ZBDAPIKey, config.LightningAddress)
+		provider, err = NewZBDProviderWithStorage(config.ZBDAPIKey, config.LightningAddress, chargeMappingStorage)
 	case "phoenixd":
 		if config.PhoenixdPassword == "" {
 			return nil, fmt.Errorf("PHOENIXD_PASSWORD required for phoenixd provider")
@@ -128,10 +131,6 @@ func New(config Config) (*System, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize %s provider: %w", config.Provider, err)
 	}
-
-	// Initialize storage
-	paidAccessStorage := NewPaidAccessStorage(config.PaidAccessFile)
-	chargeMappingStorage := NewChargeMappingStorage(config.ChargeMappingFile)
 
 	system := &System{
 		config:               config,
@@ -259,6 +258,7 @@ func (s *System) RejectEventHandler(ctx context.Context, event *nostr.Event) (bo
 					if err != nil {
 						log.Printf("❌ Failed to add paid access: %v", err)
 					} else {
+						log.Printf("✅ Successfully granted access to pubkey: %s...", event.PubKey[:16])
 						atomic.AddUint64(&s.successfulPayments, 1)
 						zbdProvider.mu.RUnlock()
 						return false, "" // Allow the event

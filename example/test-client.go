@@ -186,15 +186,21 @@ func testPaymentFlow() {
 	}
 }
 
+// Global test keypair for consistent testing
+var testSK string
+var testPK string
+
 // connectAndTest connects to the relay and sends a test event
 func connectAndTest() {
 	fmt.Println("🔗 Connecting to relay and testing...")
 
-	// Generate a test keypair
-	sk := generatePrivateKey()
-	pk, _ := nostr.GetPublicKey(sk)
+	// Generate or reuse test keypair
+	if testSK == "" {
+		testSK = generatePrivateKey()
+		testPK, _ = nostr.GetPublicKey(testSK)
+	}
 
-	npub, _ := nip19.EncodePublicKey(pk)
+	npub, _ := nip19.EncodePublicKey(testPK)
 	fmt.Printf("  Test pubkey: %s\n", npub)
 
 	// Connect to relay
@@ -211,7 +217,7 @@ func connectAndTest() {
 
 	// Subscribe to events to see what happens
 	filters := []nostr.Filter{{
-		Authors: []string{pk},
+		Authors: []string{testPK},
 		Limit:   10,
 	}}
 
@@ -224,14 +230,14 @@ func connectAndTest() {
 
 	// Create and publish a test event
 	event := &nostr.Event{
-		PubKey:    pk,
+		PubKey:    testPK,
 		CreatedAt: nostr.Now(),
 		Kind:      1,
 		Tags:      []nostr.Tag{},
 		Content:   fmt.Sprintf("Test message from client at %s", time.Now().Format(time.RFC3339)),
 	}
 
-	event.Sign(sk)
+	event.Sign(testSK)
 	fmt.Printf("  📝 Created event: %s\n", event.ID)
 
 	// Publish the event
@@ -245,18 +251,28 @@ func connectAndTest() {
 			// Extract and display the invoice for manual payment
 			if strings.Contains(err.Error(), "blocked:") {
 				// Parse the payment request from the error message
-				parts := strings.Split(err.Error(), "blocked: ")
-				if len(parts) > 1 {
-					var paymentReq PaymentRequest
-					if err := json.Unmarshal([]byte(parts[1]), &paymentReq); err == nil {
-						fmt.Printf("  💰 Invoice to pay: %s\n", paymentReq.Invoice)
-						fmt.Printf("  💰 Amount: %d msat (%d sats)\n", paymentReq.Amount, paymentReq.Amount/1000)
-						fmt.Printf("  💰 Message: %s\n", paymentReq.Message)
-						
-						// Wait for manual payment
-						waitForManualPaymentAndRetry(relay, event, pk, sk)
-						return
+				if invoice := extractInvoiceFromError(err.Error()); invoice != "" {
+					fmt.Printf("  💰 Invoice to pay: %s\n", invoice)
+					fmt.Printf("  💰 Amount: 21000 msat (21 sats)\n")
+					fmt.Printf("  💰 Message: %s\n", strings.TrimPrefix(err.Error(), "blocked: "))
+					
+					fmt.Println("\n🔔 MANUAL PAYMENT REQUIRED")
+					fmt.Println("Please pay the Lightning invoice above using your preferred Lightning wallet.")
+					fmt.Print("Press ENTER after you have paid the invoice to continue testing...")
+					
+					// Wait for user input
+					reader := bufio.NewReader(os.Stdin)
+					reader.ReadLine()
+					
+					// Try publishing again after payment
+					fmt.Println("\n🔄 Retrying event publication after payment...")
+					err = relay.Publish(ctx, *event)
+					if err != nil {
+						fmt.Printf("  ❌ Event still rejected: %v\n", err)
+					} else {
+						fmt.Println("  ✅ Event published successfully after payment!")
 					}
+					return
 				}
 			}
 		}
@@ -285,13 +301,14 @@ func connectAndTest() {
 func verifyPayment(paymentHash string) {
 	fmt.Printf("🔍 Verifying payment: %s\n", paymentHash)
 
-	// Generate a test pubkey for verification
-	sk := generatePrivateKey()
-	pk, _ := nostr.GetPublicKey(sk)
+	// Use the same pubkey that was used for creating the invoice
+	if testSK == "" {
+		log.Fatal("No test keypair available. Run 'connect' command first.")
+	}
 
 	requestBody := map[string]string{
 		"payment_hash": paymentHash,
-		"pubkey":       pk,
+		"pubkey":       testPK,
 	}
 
 	jsonBody, err := json.Marshal(requestBody)
@@ -337,6 +354,18 @@ func generatePrivateKey() string {
 		log.Fatal("Failed to generate private key:", err)
 	}
 	return hex.EncodeToString(b)
+}
+
+// extractInvoiceFromError extracts Lightning invoice from error message
+func extractInvoiceFromError(errorMsg string) string {
+	// Look for Lightning invoice pattern (starts with ln)
+	parts := strings.Fields(errorMsg)
+	for _, part := range parts {
+		if strings.HasPrefix(part, "ln") && len(part) > 50 {
+			return part
+		}
+	}
+	return ""
 }
 
 // waitForManualPaymentAndRetry waits for user to manually pay the invoice and then retries publishing

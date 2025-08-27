@@ -17,23 +17,25 @@ import (
 
 // ZBDProvider implements PaymentProvider interface for ZBD
 type ZBDProvider struct {
-	apiKey    string
-	baseURL   string
-	lightning string
+	apiKey               string
+	baseURL              string
+	lightning            string
 	// Map payment hash to charge ID for verification
-	chargeMap map[string]string
+	chargeMap            map[string]string
 	// Map payment hash to pubkey for verification
-	pubkeyMap map[string]string
-	mu        sync.RWMutex
+	pubkeyMap            map[string]string
+	mu                   sync.RWMutex
+	// Persistent storage references
+	chargeMappingStorage *ChargeMappingStorage
 }
 
 // NewZBDProvider creates a new ZBD payment provider
 func NewZBDProvider(apiKey, lightningAddress string) (*ZBDProvider, error) {
 	if apiKey == "" {
-		return nil, fmt.Errorf("ZBD API key is required")
+		return nil, fmt.Errorf("zBD API key is required")
 	}
 	if lightningAddress == "" {
-		return nil, fmt.Errorf("Lightning address is required")
+		return nil, fmt.Errorf("lightning address is required")
 	}
 
 	return &ZBDProvider{
@@ -42,6 +44,25 @@ func NewZBDProvider(apiKey, lightningAddress string) (*ZBDProvider, error) {
 		lightning: lightningAddress,
 		chargeMap: make(map[string]string),
 		pubkeyMap: make(map[string]string),
+	}, nil
+}
+
+// NewZBDProviderWithStorage creates a new ZBD payment provider with persistent storage
+func NewZBDProviderWithStorage(apiKey, lightningAddress string, chargeMappingStorage *ChargeMappingStorage) (*ZBDProvider, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("zBD API key is required")
+	}
+	if lightningAddress == "" {
+		return nil, fmt.Errorf("lightning address is required")
+	}
+
+	return &ZBDProvider{
+		apiKey:               apiKey,
+		baseURL:              "https://api.zebedee.io",
+		lightning:            lightningAddress,
+		chargeMap:            make(map[string]string),
+		pubkeyMap:            make(map[string]string),
+		chargeMappingStorage: chargeMappingStorage,
 	}, nil
 }
 
@@ -168,6 +189,11 @@ func (z *ZBDProvider) CreateInvoice(ctx context.Context, amount int64, descripti
 	z.pubkeyMap[paymentHash] = pubkey
 	z.mu.Unlock()
 	
+	// Also store in persistent storage if available
+	if z.chargeMappingStorage != nil {
+		z.chargeMappingStorage.Store(paymentHash, chargeResp.Data.ID)
+	}
+	
 	log.Printf("🐛 DEBUG ZBD: Stored mapping - PaymentHash: %s -> ChargeID: %s, Pubkey: %s...", paymentHash, chargeResp.Data.ID, pubkey[:16])
 
 	if len(chargeResp.Data.Invoice.Request) > 50 {
@@ -187,10 +213,21 @@ func (z *ZBDProvider) CreateInvoice(ctx context.Context, amount int64, descripti
 
 // VerifyPayment verifies a payment using ZBD API
 func (z *ZBDProvider) VerifyPayment(ctx context.Context, paymentHash string) (*PaymentVerification, error) {
-	// Look up charge ID from payment hash
+	// Check in-memory mapping first
 	z.mu.RLock()
 	chargeID, exists := z.chargeMap[paymentHash]
 	z.mu.RUnlock()
+	
+	// If not found in memory, check persistent storage
+	if !exists && z.chargeMappingStorage != nil {
+		chargeID, exists = z.chargeMappingStorage.Get(paymentHash)
+		if exists {
+			// Load back into memory for faster future access
+			z.mu.Lock()
+			z.chargeMap[paymentHash] = chargeID
+			z.mu.Unlock()
+		}
+	}
 	
 	if !exists {
 		return &PaymentVerification{
