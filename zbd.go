@@ -11,14 +11,20 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 )
 
 // ZBDProvider implements PaymentProvider interface for ZBD
 type ZBDProvider struct {
-	lightningAddress string
-	apiKey           string
-	baseURL          string
+	apiKey    string
+	baseURL   string
+	lightning string
+	// Map payment hash to charge ID for verification
+	chargeMap map[string]string
+	// Map payment hash to pubkey for verification
+	pubkeyMap map[string]string
+	mu        sync.RWMutex
 }
 
 // NewZBDProvider creates a new ZBD payment provider
@@ -31,9 +37,11 @@ func NewZBDProvider(apiKey, lightningAddress string) (*ZBDProvider, error) {
 	}
 
 	return &ZBDProvider{
-		lightningAddress: lightningAddress,
-		apiKey:           apiKey,
-		baseURL:          "https://api.zebedee.io",
+		apiKey:    apiKey,
+		baseURL:   "https://api.zebedee.io",
+		lightning: lightningAddress,
+		chargeMap: make(map[string]string),
+		pubkeyMap: make(map[string]string),
 	}, nil
 }
 
@@ -66,6 +74,7 @@ type ZBDChargeData struct {
 	InternalID  string     `json:"internalId"`
 	CreatedAt   string     `json:"createdAt"`
 	ExpiresAt   string     `json:"expiresAt"`
+	ConfirmedAt string     `json:"confirmedAt,omitempty"`
 }
 
 type ZBDChargeResponse struct {
@@ -152,15 +161,19 @@ func (z *ZBDProvider) CreateInvoice(ctx context.Context, amount int64, descripti
 
 	// Generate payment hash for tracking
 	paymentHash := generatePaymentHash(chargeResp.Data.Invoice.Request, pubkey)
+	
+	// Store charge ID and pubkey mapping for payment verification
+	z.mu.Lock()
+	z.chargeMap[paymentHash] = chargeResp.Data.ID
+	z.pubkeyMap[paymentHash] = pubkey
+	z.mu.Unlock()
+	
+	log.Printf("🐛 DEBUG ZBD: Stored mapping - PaymentHash: %s -> ChargeID: %s, Pubkey: %s...", paymentHash, chargeResp.Data.ID, pubkey[:16])
 
-	if len(chargeResp.Data.Invoice.Request) > 0 {
-		maxLen := 50
-		if len(chargeResp.Data.Invoice.Request) < maxLen {
-			maxLen = len(chargeResp.Data.Invoice.Request)
-		}
-		log.Printf("🐛 DEBUG ZBD: Created invoice successfully - PaymentRequest: %s", chargeResp.Data.Invoice.Request[:maxLen]+"...")
+	if len(chargeResp.Data.Invoice.Request) > 50 {
+		log.Printf("🐛 DEBUG ZBD: Created invoice successfully - PaymentRequest: %s...", chargeResp.Data.Invoice.Request[:50])
 	} else {
-		log.Printf("🐛 DEBUG ZBD: WARNING - Empty PaymentRequest in response!")
+		log.Printf("🐛 DEBUG ZBD: Created invoice successfully - PaymentRequest: %s", chargeResp.Data.Invoice.Request)
 	}
 
 	return &Invoice{
@@ -174,21 +187,81 @@ func (z *ZBDProvider) CreateInvoice(ctx context.Context, amount int64, descripti
 
 // VerifyPayment verifies a payment using ZBD API
 func (z *ZBDProvider) VerifyPayment(ctx context.Context, paymentHash string) (*PaymentVerification, error) {
-	// For ZBD, we need to map payment hash to charge ID
-	// This would typically be done through external storage
-	// For now, we'll return a basic implementation
-
-	// In a real implementation, you'd:
-	// 1. Look up charge ID from payment hash
-	// 2. Query ZBD API with charge ID
-	// 3. Return verification result
-
+	// Look up charge ID from payment hash
+	z.mu.RLock()
+	chargeID, exists := z.chargeMap[paymentHash]
+	z.mu.RUnlock()
+	
+	if !exists {
+		return &PaymentVerification{
+			Paid:        false,
+			PaymentHash: paymentHash,
+			Amount:      0,
+			PaidAt:      time.Time{},
+		}, fmt.Errorf("charge ID not found for payment hash: %s", paymentHash)
+	}
+	
+	log.Printf("🐛 DEBUG ZBD: Verifying payment - PaymentHash: %s -> ChargeID: %s", paymentHash, chargeID)
+	
+	// Query ZBD API to get charge status
+	req, err := http.NewRequestWithContext(ctx, "GET", z.baseURL+"/v0/charges/"+chargeID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	req.Header.Set("apikey", z.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	
+	log.Printf("🐛 DEBUG ZBD: Verify response status: %d", resp.StatusCode)
+	log.Printf("🐛 DEBUG ZBD: Verify response body: %s", string(body))
+	
+	if resp.StatusCode != 200 {
+		return &PaymentVerification{
+			Paid:        false,
+			PaymentHash: paymentHash,
+			Amount:      0,
+			PaidAt:      time.Time{},
+		}, fmt.Errorf("ZBD API error: %d - %s", resp.StatusCode, string(body))
+	}
+	
+	var chargeResp ZBDChargeResponse
+	if err := json.Unmarshal(body, &chargeResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	
+	// Check if payment is confirmed
+	isPaid := chargeResp.Data.Status == "completed"
+	var paidAt time.Time
+	var amount int64
+	
+	if isPaid && chargeResp.Data.ConfirmedAt != "" {
+		paidAt, _ = time.Parse(time.RFC3339, chargeResp.Data.ConfirmedAt)
+	}
+	
+	if chargeResp.Data.Amount != "" {
+		amount, _ = strconv.ParseInt(chargeResp.Data.Amount, 10, 64)
+	}
+	
+	log.Printf("🐛 DEBUG ZBD: Payment verification result - Paid: %v, Status: %s, Amount: %d", isPaid, chargeResp.Data.Status, amount)
+	
 	return &PaymentVerification{
-		Paid:        false, // Would be determined by API response
+		Paid:        isPaid,
 		PaymentHash: paymentHash,
-		Amount:      0,
-		PaidAt:      time.Time{},
-	}, fmt.Errorf("payment verification requires charge mapping storage")
+		Amount:      amount,
+		PaidAt:      paidAt,
+	}, nil
 }
 
 // ZBDWebhookPayload represents the webhook payload from ZBD

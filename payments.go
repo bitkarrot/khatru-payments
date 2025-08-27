@@ -237,6 +237,38 @@ func (s *System) RejectEventHandler(ctx context.Context, event *nostr.Event) (bo
 		return false, ""
 	}
 
+	// Check if there are any existing payments for this pubkey that might have been paid
+	log.Printf("🔍 Checking for existing payments for pubkey: %s...", event.PubKey[:16])
+	
+	// For ZBD provider, check stored payment hashes for this specific pubkey
+	if zbdProvider, ok := s.provider.(*ZBDProvider); ok {
+		zbdProvider.mu.RLock()
+		for paymentHash, storedPubkey := range zbdProvider.pubkeyMap {
+			if storedPubkey == event.PubKey {
+				log.Printf("🔍 Found payment for this pubkey - checking hash: %s", paymentHash)
+				verification, err := zbdProvider.VerifyPayment(ctx, paymentHash)
+				if err == nil && verification.Paid {
+					log.Printf("💰 Found paid invoice! Granting access for pubkey: %s...", event.PubKey[:16])
+					// Grant access
+					err = s.paidAccessStorage.AddPaidAccess(
+						event.PubKey,
+						verification.PaymentHash,
+						verification.Amount,
+						s.accessDuration,
+					)
+					if err != nil {
+						log.Printf("❌ Failed to add paid access: %v", err)
+					} else {
+						atomic.AddUint64(&s.successfulPayments, 1)
+						zbdProvider.mu.RUnlock()
+						return false, "" // Allow the event
+					}
+				}
+			}
+		}
+		zbdProvider.mu.RUnlock()
+	}
+
 	// User hasn't paid, reject with payment request
 	atomic.AddUint64(&s.paymentRequests, 1)
 

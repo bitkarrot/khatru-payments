@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -240,6 +241,24 @@ func connectAndTest() {
 		// Check if the error contains payment information
 		if strings.Contains(err.Error(), "invoice") || strings.Contains(err.Error(), "payment") {
 			fmt.Println("  💳 Payment required - check error message for invoice details")
+			
+			// Extract and display the invoice for manual payment
+			if strings.Contains(err.Error(), "blocked:") {
+				// Parse the payment request from the error message
+				parts := strings.Split(err.Error(), "blocked: ")
+				if len(parts) > 1 {
+					var paymentReq PaymentRequest
+					if err := json.Unmarshal([]byte(parts[1]), &paymentReq); err == nil {
+						fmt.Printf("  💰 Invoice to pay: %s\n", paymentReq.Invoice)
+						fmt.Printf("  💰 Amount: %d msat (%d sats)\n", paymentReq.Amount, paymentReq.Amount/1000)
+						fmt.Printf("  💰 Message: %s\n", paymentReq.Message)
+						
+						// Wait for manual payment
+						waitForManualPaymentAndRetry(relay, event, pk, sk)
+						return
+					}
+				}
+			}
 		}
 	} else {
 		fmt.Println("  ✅ Event published successfully!")
@@ -318,4 +337,75 @@ func generatePrivateKey() string {
 		log.Fatal("Failed to generate private key:", err)
 	}
 	return hex.EncodeToString(b)
+}
+
+// waitForManualPaymentAndRetry waits for user to manually pay the invoice and then retries publishing
+func waitForManualPaymentAndRetry(relay *nostr.Relay, event *nostr.Event, pk, sk string) {
+	fmt.Println("\n🔔 MANUAL PAYMENT REQUIRED")
+	fmt.Println("Please pay the Lightning invoice above using your preferred Lightning wallet.")
+	fmt.Print("Press ENTER after you have paid the invoice to continue testing...")
+	
+	// Wait for user input
+	reader := bufio.NewReader(os.Stdin)
+	reader.ReadLine()
+	
+	fmt.Println("\n🔄 Retrying event publication after payment...")
+	
+	// Create a new context for the retry
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	
+	// Create a new test event to verify write access
+	retryEvent := &nostr.Event{
+		PubKey:    pk,
+		CreatedAt: nostr.Now(),
+		Kind:      1,
+		Tags:      []nostr.Tag{},
+		Content:   fmt.Sprintf("Post-payment test message at %s", time.Now().Format(time.RFC3339)),
+	}
+	
+	retryEvent.Sign(sk)
+	fmt.Printf("  📝 Created retry event: %s\n", retryEvent.ID)
+	
+	// Try to publish again
+	err := relay.Publish(ctx, *retryEvent)
+	if err != nil {
+		fmt.Printf("  ❌ Event still rejected after payment: %v\n", err)
+		fmt.Println("  💡 The payment may not have been processed yet, or there might be an issue.")
+		fmt.Println("  💡 Try waiting a few seconds and running the test again.")
+	} else {
+		fmt.Println("  ✅ Event published successfully after payment!")
+		fmt.Println("  🎉 Payment verification complete - you now have write access to the relay!")
+		
+		// Listen for the published event
+		fmt.Println("  👂 Listening for your published event...")
+		
+		filters := []nostr.Filter{{
+			Authors: []string{pk},
+			Limit:   1,
+			Since:   &retryEvent.CreatedAt,
+		}}
+		
+		sub, err := relay.Subscribe(ctx, filters)
+		if err != nil {
+			fmt.Printf("  ⚠️  Failed to subscribe: %v\n", err)
+			return
+		}
+		
+		timeout := time.After(5 * time.Second)
+		for {
+			select {
+			case receivedEvent := <-sub.Events:
+				if receivedEvent.ID == retryEvent.ID {
+					fmt.Printf("  📨 ✅ Confirmed: Received your event back from relay: %s\n", receivedEvent.Content)
+					return
+				}
+			case <-timeout:
+				fmt.Println("  ⏰ Done listening")
+				return
+			case <-sub.EndOfStoredEvents:
+				// Continue listening for new events
+			}
+		}
+	}
 }
