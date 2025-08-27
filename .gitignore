@@ -1,3 +1,6 @@
 .env
 example-relay
 test-client
+example/data
+example/*.txt
+data*
