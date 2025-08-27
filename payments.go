@@ -123,7 +123,7 @@ func New(config Config) (*System, error) {
 		if config.PhoenixdURL == "" {
 			config.PhoenixdURL = "http://localhost:9740"
 		}
-		provider, err = NewPhoenixdProvider(config.PhoenixdURL, config.PhoenixdPassword)
+		provider, err = NewPhoenixdProviderWithStorage(config.PhoenixdURL, config.PhoenixdPassword, chargeMappingStorage)
 	default:
 		return nil, fmt.Errorf("unsupported payment provider: %s (supported: zbd, phoenixd)", config.Provider)
 	}

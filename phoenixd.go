@@ -9,13 +9,21 @@ import (
 	"io/ioutil"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
 // PhoenixdProvider implements PaymentProvider interface for phoenixd
 type PhoenixdProvider struct {
-	baseURL  string
-	password string
+	baseURL              string
+	password             string
+	// Map payment hash to external ID for verification
+	paymentMap           map[string]string
+	// Map payment hash to pubkey for verification
+	pubkeyMap            map[string]string
+	mu                   sync.RWMutex
+	// Persistent storage references
+	chargeMappingStorage *ChargeMappingStorage
 }
 
 // NewPhoenixdProvider creates a new phoenixd payment provider
@@ -28,8 +36,28 @@ func NewPhoenixdProvider(baseURL, password string) (*PhoenixdProvider, error) {
 	}
 
 	return &PhoenixdProvider{
-		baseURL:  baseURL,
-		password: password,
+		baseURL:    baseURL,
+		password:   password,
+		paymentMap: make(map[string]string),
+		pubkeyMap:  make(map[string]string),
+	}, nil
+}
+
+// NewPhoenixdProviderWithStorage creates a new phoenixd payment provider with persistent storage
+func NewPhoenixdProviderWithStorage(baseURL, password string, chargeMappingStorage *ChargeMappingStorage) (*PhoenixdProvider, error) {
+	if password == "" {
+		return nil, fmt.Errorf("phoenixd password is required")
+	}
+	if baseURL == "" {
+		baseURL = "http://localhost:9740"
+	}
+
+	return &PhoenixdProvider{
+		baseURL:              baseURL,
+		password:             password,
+		paymentMap:           make(map[string]string),
+		pubkeyMap:            make(map[string]string),
+		chargeMappingStorage: chargeMappingStorage,
 	}, nil
 }
 
@@ -115,6 +143,17 @@ func (p *PhoenixdProvider) CreateInvoice(ctx context.Context, amount int64, desc
 		return nil, fmt.Errorf("failed to unmarshal response: %w", err)
 	}
 
+	// Store payment hash and pubkey mapping for payment verification
+	p.mu.Lock()
+	p.paymentMap[invoiceResp.PaymentHash] = externalID
+	p.pubkeyMap[invoiceResp.PaymentHash] = pubkey
+	p.mu.Unlock()
+	
+	// Also store in persistent storage if available
+	if p.chargeMappingStorage != nil {
+		p.chargeMappingStorage.Store(invoiceResp.PaymentHash, externalID)
+	}
+
 	// Convert timestamps
 	expiresAt := time.Unix(invoiceResp.ExpiresAt, 0)
 
@@ -127,8 +166,32 @@ func (p *PhoenixdProvider) CreateInvoice(ctx context.Context, amount int64, desc
 	}, nil
 }
 
-// VerifyPayment verifies a payment using phoenixd API
+// VerifyPayment checks if a payment has been completed
 func (p *PhoenixdProvider) VerifyPayment(ctx context.Context, paymentHash string) (*PaymentVerification, error) {
+	// Get external ID from payment map or persistent storage
+	p.mu.RLock()
+	externalID, exists := p.paymentMap[paymentHash]
+	p.mu.RUnlock()
+
+	// If not found in memory, try persistent storage
+	if !exists && p.chargeMappingStorage != nil {
+		if storedID, found := p.chargeMappingStorage.Get(paymentHash); found {
+			externalID = storedID
+			exists = true
+			// Store back in memory for faster future access
+			p.mu.Lock()
+			p.paymentMap[paymentHash] = externalID
+			p.mu.Unlock()
+		}
+	}
+
+	if !exists {
+		return &PaymentVerification{
+			Paid:        false,
+			PaymentHash: paymentHash,
+		}, nil
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/payments/incoming/"+paymentHash, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
