@@ -2,15 +2,22 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 
 	"github.com/bitkarrot/khatru-payments"
 	"github.com/fiatjaf/khatru"
+	"github.com/joho/godotenv"
 	"github.com/nbd-wtf/go-nostr"
 )
 
 func main() {
+	// Load .env file
+	if err := godotenv.Load(); err != nil {
+		log.Printf("Warning: .env file not found or could not be loaded: %v", err)
+	}
+
 	// Initialize payment system from environment variables
 	paymentSystem, err := payments.NewFromEnv()
 	if err != nil {
@@ -46,11 +53,12 @@ func main() {
 	// Add custom endpoint to show payment stats
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		stats := paymentSystem.GetStats()
+		response := map[string]interface{}{
+			"relay":         "Example Relay with Payments",
+			"payment_stats": stats,
+		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{
-			"relay": "Example Relay with Payments",
-			"payment_stats": ` + toJSON(stats) + `
-		}`))
+		json.NewEncoder(w).Encode(response)
 	})
 
 	log.Println("🚀 Relay with payment system running on :3334")
@@ -71,7 +79,3 @@ func checkWebOfTrust(pubkey string) bool {
 	return false // For demo, treat all users as non-WoT
 }
 
-func toJSON(v interface{}) string {
-	// Simple JSON conversion for demo
-	return "{}"
-}
