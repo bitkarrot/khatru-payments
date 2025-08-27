@@ -157,10 +157,10 @@ hasAccess := paymentSystem.HasAccess(pubkey)
 
 The library uses JSON files for persistence:
 
-- `paid_access.json` - Active paid users and expiration times
-- `charge_mappings.json` - Payment hash to provider ID mappings (deprecated - now handled in memory)
+- `paid_access.json` - **Active paid users and expiration times** (persistent, required for production)
+- `charge_mappings.json` - Payment hash to provider ID mappings (optional, can be in-memory)
 
-Files are automatically created and managed by the library. Note that payment hash mappings are now stored in memory within the provider for better performance and accuracy.
+Files are automatically created and managed by the library. The paid access storage is essential for production use and handles thousands of pubkeys efficiently. Payment hash mappings are handled in-memory by providers during the payment verification process.
 
 ## Error Handling
 
