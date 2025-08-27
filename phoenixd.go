@@ -1,7 +1,6 @@
 package payments
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -51,21 +51,21 @@ type PhoenixdInvoiceResponse struct {
 	Serialized     string `json:"serialized"` // BOLT11 invoice
 	Description    string `json:"description"`
 	ExternalID     string `json:"externalId"`
-	CreatedAtUnix  int64  `json:"createdAt"`
-	ExpiresAtUnix  int64  `json:"expiresAt"`
+	CreatedAt      int64  `json:"createdAt"`
+	ExpiresAt      int64  `json:"expiresAt"`
 }
 
 type PhoenixdPaymentResponse struct {
-	PaymentHash     string `json:"paymentHash"`
-	Preimage        string `json:"preimage"`
-	ExternalID      string `json:"externalId"`
-	Description     string `json:"description"`
-	Invoice         string `json:"invoice"`
-	IsPaid          bool   `json:"isPaid"`
-	ReceivedSat     int64  `json:"receivedSat"`
-	Fees            int64  `json:"fees"`
-	CompletedAtUnix int64  `json:"completedAt"`
-	CreatedAtUnix   int64  `json:"createdAt"`
+	PaymentHash   string `json:"paymentHash"`
+	Preimage      string `json:"preimage"`
+	ExternalID    string `json:"externalId"`
+	Description   string `json:"description"`
+	Invoice       string `json:"invoice"`
+	IsPaid        bool   `json:"isPaid"`
+	ReceivedSat   int64  `json:"receivedSat"`
+	Fees          int64  `json:"fees"`
+	CompletedAt   int64  `json:"completedAt"`
+	CreatedAt     int64  `json:"createdAt"`
 }
 
 // CreateInvoice creates a Lightning invoice using phoenixd
@@ -80,23 +80,18 @@ func (p *PhoenixdProvider) CreateInvoice(ctx context.Context, amount int64, desc
 	hash := sha256.Sum256([]byte(pubkey + fmt.Sprintf("%d", time.Now().Unix())))
 	externalID := hex.EncodeToString(hash[:])[:16]
 
-	invoiceReq := PhoenixdInvoiceRequest{
-		AmountSat:   amountSat,
-		Description: description,
-		ExternalID:  externalID,
-	}
+	// phoenixd expects form data, not JSON
+	formData := fmt.Sprintf("amountSat=%d&description=%s&externalId=%s", 
+		amountSat, 
+		description, 
+		externalID)
 
-	reqBody, err := json.Marshal(invoiceReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal invoice request: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/createinvoice", bytes.NewBuffer(reqBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/createinvoice", strings.NewReader(formData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetBasicAuth("", p.password) // phoenixd uses HTTP basic auth with empty username
 
 	client := &http.Client{Timeout: 30 * time.Second}
@@ -121,7 +116,7 @@ func (p *PhoenixdProvider) CreateInvoice(ctx context.Context, amount int64, desc
 	}
 
 	// Convert timestamps
-	expiresAt := time.Unix(invoiceResp.ExpiresAtUnix, 0)
+	expiresAt := time.Unix(invoiceResp.ExpiresAt, 0)
 
 	return &Invoice{
 		PaymentRequest: invoiceResp.Serialized,
@@ -134,7 +129,7 @@ func (p *PhoenixdProvider) CreateInvoice(ctx context.Context, amount int64, desc
 
 // VerifyPayment verifies a payment using phoenixd API
 func (p *PhoenixdProvider) VerifyPayment(ctx context.Context, paymentHash string) (*PaymentVerification, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/v1/payments/incoming/"+paymentHash, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/payments/incoming/"+paymentHash, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -176,7 +171,7 @@ func (p *PhoenixdProvider) VerifyPayment(ctx context.Context, paymentHash string
 	amountMsat := paymentResp.ReceivedSat * 1000
 
 	// Convert timestamp
-	paidAt := time.Unix(paymentResp.CompletedAtUnix, 0)
+	paidAt := time.Unix(paymentResp.CompletedAt, 0)
 
 	verification := &PaymentVerification{
 		Paid:        paymentResp.IsPaid,

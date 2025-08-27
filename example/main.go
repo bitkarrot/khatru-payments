@@ -6,7 +6,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/bitkarrot/khatru-payments"
+	payments "github.com/bitkarrot/khatru-payments"
 	"github.com/fiatjaf/khatru"
 	"github.com/joho/godotenv"
 	"github.com/nbd-wtf/go-nostr"
@@ -26,7 +26,7 @@ func main() {
 
 	// Create khatru relay
 	relay := khatru.NewRelay()
-	
+
 	// Set relay info
 	relay.Info.Name = "Example Relay with Payments"
 	relay.Info.Description = "A relay that requires payment for non-WoT users"
@@ -37,11 +37,11 @@ func main() {
 	relay.RejectEvent = append(relay.RejectEvent, func(ctx context.Context, event *nostr.Event) (bool, string) {
 		// Your WoT logic here - check if user is in Web of Trust
 		isInWoT := checkWebOfTrust(event.PubKey)
-		
+
 		if isInWoT {
 			return false, "" // Allow WoT users
 		}
-		
+
 		// For non-WoT users, use payment system
 		return paymentSystem.RejectEventHandler(ctx, event)
 	})
@@ -64,9 +64,9 @@ func main() {
 	log.Println("🚀 Relay with payment system running on :3334")
 	log.Println("💰 Payment endpoints:")
 	log.Println("   POST /verify-payment")
-	log.Println("   POST /webhook/zbd") 
+	log.Println("   POST /webhook/zbd")
 	log.Println("   GET /debug/payments")
-	
+
 	if err := http.ListenAndServe(":3334", relay); err != nil {
 		log.Fatal(err)
 	}
@@ -78,4 +78,3 @@ func checkWebOfTrust(pubkey string) bool {
 	// For example, check if pubkey is in your trust network
 	return false // For demo, treat all users as non-WoT
 }
-
