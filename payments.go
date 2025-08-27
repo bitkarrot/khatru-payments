@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -52,26 +53,26 @@ type PaymentRequest struct {
 
 // Config holds payment system configuration
 type Config struct {
-	Provider           string        `json:"provider"`             // "zbd" or "phoenixd"
-	PaymentAmount      int64         `json:"payment_amount"`       // in millisatoshis
-	AccessDuration     string        `json:"access_duration"`      // "1week", "1month", "1year", "forever"
-	LightningAddress   string        `json:"lightning_address"`    // for ZBD
-	ZBDAPIKey          string        `json:"zbd_api_key"`          // for ZBD
-	PhoenixdURL        string        `json:"phoenixd_url"`         // for phoenixd
-	PhoenixdPassword   string        `json:"phoenixd_password"`    // for phoenixd
-	PaidAccessFile     string        `json:"paid_access_file"`     // storage file path
-	ChargeMappingFile  string        `json:"charge_mapping_file"`  // charge mapping file path
-	RejectMessage      string        `json:"reject_message"`       // custom rejection message
+	Provider          string `json:"provider"`            // "zbd" or "phoenixd"
+	PaymentAmount     int64  `json:"payment_amount"`      // in millisatoshis
+	AccessDuration    string `json:"access_duration"`     // "1week", "1month", "1year", "forever"
+	LightningAddress  string `json:"lightning_address"`   // for ZBD
+	ZBDAPIKey         string `json:"zbd_api_key"`         // for ZBD
+	PhoenixdURL       string `json:"phoenixd_url"`        // for phoenixd
+	PhoenixdPassword  string `json:"phoenixd_password"`   // for phoenixd
+	PaidAccessFile    string `json:"paid_access_file"`    // storage file path
+	ChargeMappingFile string `json:"charge_mapping_file"` // charge mapping file path
+	RejectMessage     string `json:"reject_message"`      // custom rejection message
 }
 
 // System represents the payment system
 type System struct {
-	config              Config
-	provider            PaymentProvider
-	paidAccessStorage   *PaidAccessStorage
+	config               Config
+	provider             PaymentProvider
+	paidAccessStorage    *PaidAccessStorage
 	chargeMappingStorage *ChargeMappingStorage
-	accessDuration      time.Duration
-	
+	accessDuration       time.Duration
+
 	// Performance counters
 	paymentRequests    uint64
 	successfulPayments uint64
@@ -93,7 +94,7 @@ func New(config Config) (*System, error) {
 		config.ChargeMappingFile = "./data/charge_mappings.json"
 	}
 	if config.RejectMessage == "" {
-		config.RejectMessage = "You are not part of the WoT, payment required to join relay"
+		config.RejectMessage = "You are not part of the Relay, payment required to join!"
 	}
 
 	// Parse access duration
@@ -153,16 +154,25 @@ func New(config Config) (*System, error) {
 
 // NewFromEnv creates a payment system from environment variables
 func NewFromEnv() (*System, error) {
-	config := Config{
-		Provider:           getEnvWithDefault("PAYMENT_PROVIDER", "zbd"),
-		LightningAddress:   os.Getenv("LIGHTNING_ADDRESS"),
-		ZBDAPIKey:          os.Getenv("ZBD_API_KEY"),
-		PhoenixdURL:        getEnvWithDefault("PHOENIXD_URL", "http://localhost:9740"),
-		PhoenixdPassword:   os.Getenv("PHOENIXD_PASSWORD"),
-		AccessDuration:     getEnvWithDefault("ACCESS_DURATION", "1month"),
-		PaidAccessFile:     getEnvWithDefault("PAID_ACCESS_FILE", "./data/paid_access.json"),
-		ChargeMappingFile:  getEnvWithDefault("CHARGE_MAPPING_FILE", "./data/charge_mappings.json"),
-		RejectMessage:      getEnvWithDefault("PAYMENT_REJECT_MESSAGE", "You are not part of the WoT, payment required to join relay"),
+	rejectMsg := getEnvWithDefault("PAYMENT_REJECT_MESSAGE", "You are not part of the WoT, payment required to join relay")
+	// If we only got "You", it means the .env parsing failed, use the full message
+	if rejectMsg == "You" {
+		rejectMsg = "You_are_not_part_of_the_relay_payment_required_to_join"
+	}
+	// Replace underscores with spaces for display
+	rejectMsg = strings.ReplaceAll(rejectMsg, "_", " ")
+	log.Printf("🐛 DEBUG: RejectMessage from env: '%s'", rejectMsg)
+
+	config := &Config{
+		Provider:          getEnvWithDefault("PAYMENT_PROVIDER", "zbd"),
+		LightningAddress:  getEnvWithDefault("LIGHTNING_ADDRESS", ""),
+		ZBDAPIKey:         os.Getenv("ZBD_API_KEY"),
+		PhoenixdURL:       getEnvWithDefault("PHOENIXD_URL", "http://localhost:9740"),
+		PhoenixdPassword:  os.Getenv("PHOENIXD_PASSWORD"),
+		AccessDuration:    getEnvWithDefault("ACCESS_DURATION", "1month"),
+		PaidAccessFile:    getEnvWithDefault("PAID_ACCESS_FILE", "./data/paid_access.json"),
+		ChargeMappingFile: getEnvWithDefault("CHARGE_MAPPING_FILE", "./data/charge_mappings.json"),
+		RejectMessage:     rejectMsg,
 	}
 
 	// Parse payment amount
@@ -174,7 +184,7 @@ func NewFromEnv() (*System, error) {
 		config.PaymentAmount = amount
 	}
 
-	return New(config)
+	return New(*config)
 }
 
 // HasAccess checks if a pubkey has valid paid access
@@ -185,7 +195,7 @@ func (s *System) HasAccess(pubkey string) bool {
 // CreateInvoice creates an invoice for a pubkey
 func (s *System) CreateInvoice(ctx context.Context, pubkey string) (*Invoice, error) {
 	description := fmt.Sprintf("WoT Relay Access - pubkey:%s", pubkey)
-	
+
 	return s.provider.CreateInvoice(
 		ctx,
 		s.config.PaymentAmount,
@@ -257,18 +267,18 @@ func (s *System) RegisterHandlers(mux *http.ServeMux) {
 // GetStats returns payment statistics
 func (s *System) GetStats() map[string]interface{} {
 	accessStats := s.paidAccessStorage.GetStats()
-	
+
 	return map[string]interface{}{
-		"payment_requests":     atomic.LoadUint64(&s.paymentRequests),
-		"successful_payments":  atomic.LoadUint64(&s.successfulPayments),
-		"total_members":        accessStats["total_members"],
-		"active_members":       accessStats["active_members"],
-		"expired_members":      accessStats["expired_members"],
-		"provider":             s.provider.GetProviderName(),
-		"lightning_address":    s.config.LightningAddress,
-		"payment_amount_msat":  s.config.PaymentAmount,
-		"payment_amount_sats":  s.config.PaymentAmount / 1000,
-		"access_duration":      s.config.AccessDuration,
+		"payment_requests":    atomic.LoadUint64(&s.paymentRequests),
+		"successful_payments": atomic.LoadUint64(&s.successfulPayments),
+		"total_members":       accessStats["total_members"],
+		"active_members":      accessStats["active_members"],
+		"expired_members":     accessStats["expired_members"],
+		"provider":            s.provider.GetProviderName(),
+		"lightning_address":   s.config.LightningAddress,
+		"payment_amount_msat": s.config.PaymentAmount,
+		"payment_amount_sats": s.config.PaymentAmount / 1000,
+		"access_duration":     s.config.AccessDuration,
 	}
 }
 
