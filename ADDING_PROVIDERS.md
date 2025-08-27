@@ -11,9 +11,11 @@ The library uses a `PaymentProvider` interface that makes it easy to add new bac
 ```go
 type PaymentProvider interface {
     // CreateInvoice creates a payment invoice for the specified amount
+    // pubkey parameter is used for payment tracking and verification
     CreateInvoice(ctx context.Context, amount int64, description string, pubkey string) (*Invoice, error)
 
     // VerifyPayment checks if a payment has been completed
+    // Returns verification details including payment status and amount
     VerifyPayment(ctx context.Context, paymentHash string) (*PaymentVerification, error)
 
     // GetProviderName returns the name of the payment provider
@@ -42,9 +44,13 @@ import (
 
 // YourProviderProvider implements PaymentProvider interface
 type YourProviderProvider struct {
-    baseURL string
-    apiKey  string
-    // Add other configuration fields as needed
+    baseURL   string
+    apiKey    string
+    // Map payment hash to charge ID for verification
+    chargeMap map[string]string
+    // Map payment hash to pubkey for verification
+    pubkeyMap map[string]string
+    mu        sync.RWMutex
 }
 
 // NewYourProviderProvider creates a new provider instance
@@ -57,8 +63,10 @@ func NewYourProviderProvider(baseURL, apiKey string) (*YourProviderProvider, err
     }
 
     return &YourProviderProvider{
-        baseURL: baseURL,
-        apiKey:  apiKey,
+        baseURL:   baseURL,
+        apiKey:    apiKey,
+        chargeMap: make(map[string]string),
+        pubkeyMap: make(map[string]string),
     }, nil
 }
 
@@ -133,6 +141,12 @@ func (y *YourProviderProvider) CreateInvoice(ctx context.Context, amount int64, 
     // Convert to library format
     expiresAt, _ := time.Parse(time.RFC3339, invoiceResp.ExpiresAt)
 
+    // Store charge ID and pubkey mapping for payment verification
+    y.mu.Lock()
+    y.chargeMap[invoiceResp.PaymentHash] = invoiceResp.PaymentHash // or actual charge ID from provider
+    y.pubkeyMap[invoiceResp.PaymentHash] = pubkey
+    y.mu.Unlock()
+
     return &Invoice{
         PaymentRequest: invoiceResp.PaymentRequest,
         PaymentHash:    invoiceResp.PaymentHash,
@@ -154,7 +168,21 @@ type YourProviderPaymentResponse struct {
 }
 
 func (y *YourProviderProvider) VerifyPayment(ctx context.Context, paymentHash string) (*PaymentVerification, error) {
-    req, err := http.NewRequestWithContext(ctx, "GET", y.baseURL+"/v1/payments/"+paymentHash, nil)
+    // Look up charge ID from payment hash
+    y.mu.RLock()
+    chargeID, exists := y.chargeMap[paymentHash]
+    y.mu.RUnlock()
+    
+    if !exists {
+        return &PaymentVerification{
+            Paid:        false,
+            PaymentHash: paymentHash,
+            Amount:      0,
+            PaidAt:      time.Time{},
+        }, fmt.Errorf("charge ID not found for payment hash: %s", paymentHash)
+    }
+
+    req, err := http.NewRequestWithContext(ctx, "GET", y.baseURL+"/v1/payments/"+chargeID, nil)
     if err != nil {
         return nil, fmt.Errorf("failed to create request: %w", err)
     }
