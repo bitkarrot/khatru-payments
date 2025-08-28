@@ -1,3 +1,5 @@
+//go:build client
+
 package main
 
 import (
@@ -193,7 +195,7 @@ var testPK string
 // loadOrCreateKeypair loads keypair from file or creates new one
 func loadOrCreateKeypair() {
 	const keypairFile = "test-keypair.txt"
-	
+
 	// Try to load existing keypair
 	if data, err := ioutil.ReadFile(keypairFile); err == nil {
 		lines := strings.Split(string(data), "\n")
@@ -204,11 +206,11 @@ func loadOrCreateKeypair() {
 			return
 		}
 	}
-	
+
 	// Generate new keypair if file doesn't exist or is invalid
 	testSK = generatePrivateKey()
 	testPK, _ = nostr.GetPublicKey(testSK)
-	
+
 	// Save to file
 	keypairData := fmt.Sprintf("%s\n%s\n", testSK, testPK)
 	if err := ioutil.WriteFile(keypairFile, []byte(keypairData), 0600); err != nil {
@@ -272,7 +274,7 @@ func connectAndTest() {
 		// Check if the error contains payment information
 		if strings.Contains(err.Error(), "invoice") || strings.Contains(err.Error(), "payment") {
 			fmt.Println("  💳 Payment required - check error message for invoice details")
-			
+
 			// Extract and display the invoice for manual payment
 			if strings.Contains(err.Error(), "blocked:") {
 				// Parse the payment request from the error message
@@ -280,15 +282,15 @@ func connectAndTest() {
 					fmt.Printf("  💰 Invoice to pay: %s\n", invoice)
 					fmt.Printf("  💰 Amount: 21000 msat (21 sats)\n")
 					fmt.Printf("  💰 Message: %s\n", strings.TrimPrefix(err.Error(), "blocked: "))
-					
+
 					fmt.Println("\n🔔 MANUAL PAYMENT REQUIRED")
 					fmt.Println("Please pay the Lightning invoice above using your preferred Lightning wallet.")
 					fmt.Print("Press ENTER after you have paid the invoice to continue testing...")
-					
+
 					// Wait for user input
 					reader := bufio.NewReader(os.Stdin)
 					reader.ReadLine()
-					
+
 					// Try publishing again after payment
 					fmt.Println("\n🔄 Retrying event publication after payment...")
 					err = relay.Publish(ctx, *event)
@@ -395,7 +397,7 @@ func extractInvoiceFromError(errorMsg string) string {
 			}
 		}
 	}
-	
+
 	// Fallback: Look for Lightning invoice pattern (starts with ln)
 	parts := strings.Fields(errorMsg)
 	for _, part := range parts {
@@ -411,17 +413,17 @@ func waitForManualPaymentAndRetry(relay *nostr.Relay, event *nostr.Event, pk, sk
 	fmt.Println("\n🔔 MANUAL PAYMENT REQUIRED")
 	fmt.Println("Please pay the Lightning invoice above using your preferred Lightning wallet.")
 	fmt.Print("Press ENTER after you have paid the invoice to continue testing...")
-	
+
 	// Wait for user input
 	reader := bufio.NewReader(os.Stdin)
 	reader.ReadLine()
-	
+
 	fmt.Println("\n🔄 Retrying event publication after payment...")
-	
+
 	// Create a new context for the retry
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	
+
 	// Create a new test event to verify write access
 	retryEvent := &nostr.Event{
 		PubKey:    pk,
@@ -430,10 +432,10 @@ func waitForManualPaymentAndRetry(relay *nostr.Relay, event *nostr.Event, pk, sk
 		Tags:      []nostr.Tag{},
 		Content:   fmt.Sprintf("Post-payment test message at %s", time.Now().Format(time.RFC3339)),
 	}
-	
+
 	retryEvent.Sign(sk)
 	fmt.Printf("  📝 Created retry event: %s\n", retryEvent.ID)
-	
+
 	// Try to publish again
 	err := relay.Publish(ctx, *retryEvent)
 	if err != nil {
@@ -443,22 +445,22 @@ func waitForManualPaymentAndRetry(relay *nostr.Relay, event *nostr.Event, pk, sk
 	} else {
 		fmt.Println("  ✅ Event published successfully after payment!")
 		fmt.Println("  🎉 Payment verification complete - you now have write access to the relay!")
-		
+
 		// Listen for the published event
 		fmt.Println("  👂 Listening for your published event...")
-		
+
 		filters := []nostr.Filter{{
 			Authors: []string{pk},
 			Limit:   1,
 			Since:   &retryEvent.CreatedAt,
 		}}
-		
+
 		sub, err := relay.Subscribe(ctx, filters)
 		if err != nil {
 			fmt.Printf("  ⚠️  Failed to subscribe: %v\n", err)
 			return
 		}
-		
+
 		timeout := time.After(5 * time.Second)
 		for {
 			select {

@@ -1,3 +1,5 @@
+//go:build relay
+
 package main
 
 import (

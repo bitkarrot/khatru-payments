@@ -2,6 +2,8 @@
 
 A Lightning payment library for Nostr relays built with the khatru framework. This library provides a pluggable payment system that allows relay operators to require Lightning payments for access from users not in their Web of Trust (WoT).
 
+TODO: NOTE - Go back and test phoenixd on testnet3
+
 ## Features
 
 - **Multiple Payment Providers**: Support for ZBD and phoenixd backends
