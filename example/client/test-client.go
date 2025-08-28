@@ -179,9 +179,23 @@ func testPaymentFlow() {
 	err = relay.Publish(context.Background(), *event)
 	if err != nil {
 		fmt.Printf("  ❌ Event rejected: %v\n", err)
+		fmt.Printf("  🔍 Full error details: %+v\n", err)
+		
 		// Check if the error contains payment information
 		if strings.Contains(err.Error(), "invoice") || strings.Contains(err.Error(), "payment") {
 			fmt.Println("  💳 Payment required - check error message for invoice details")
+			// Try to extract and display any JSON content from the error
+			errorStr := err.Error()
+			if strings.Contains(errorStr, "{") {
+				start := strings.Index(errorStr, "{")
+				if start != -1 {
+					jsonPart := errorStr[start:]
+					if end := strings.LastIndex(jsonPart, "}"); end != -1 {
+						jsonPart = jsonPart[:end+1]
+						fmt.Printf("  📄 JSON content: %s\n", jsonPart)
+					}
+				}
+			}
 		}
 	} else {
 		fmt.Println("  ✅ Event published successfully (user might be in WoT)")

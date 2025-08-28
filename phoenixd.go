@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -244,4 +245,23 @@ func (p *PhoenixdProvider) VerifyPayment(ctx context.Context, paymentHash string
 	}
 
 	return verification, nil
+}
+
+// CheckExistingPayments checks for any existing payments for a pubkey and returns verification if paid
+func (p *PhoenixdProvider) CheckExistingPayments(ctx context.Context, pubkey string) (*PaymentVerification, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	
+	for paymentHash, storedPubkey := range p.pubkeyMap {
+		if storedPubkey == pubkey {
+			log.Printf("🔍 Found payment for this pubkey - checking hash: %s", paymentHash)
+			verification, err := p.VerifyPayment(ctx, paymentHash)
+			if err == nil && verification.Paid {
+				log.Printf("💰 Found paid invoice! Payment hash: %s", paymentHash)
+				return verification, nil
+			}
+		}
+	}
+	
+	return nil, nil // No paid payments found
 }

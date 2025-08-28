@@ -301,6 +301,25 @@ func (z *ZBDProvider) VerifyPayment(ctx context.Context, paymentHash string) (*P
 	}, nil
 }
 
+// CheckExistingPayments checks for any existing payments for a pubkey and returns verification if paid
+func (z *ZBDProvider) CheckExistingPayments(ctx context.Context, pubkey string) (*PaymentVerification, error) {
+	z.mu.RLock()
+	defer z.mu.RUnlock()
+	
+	for paymentHash, storedPubkey := range z.pubkeyMap {
+		if storedPubkey == pubkey {
+			log.Printf("🔍 Found payment for this pubkey - checking hash: %s", paymentHash)
+			verification, err := z.VerifyPayment(ctx, paymentHash)
+			if err == nil && verification.Paid {
+				log.Printf("💰 Found paid invoice! Payment hash: %s", paymentHash)
+				return verification, nil
+			}
+		}
+	}
+	
+	return nil, nil // No paid payments found
+}
+
 // ZBDWebhookPayload represents the webhook payload from ZBD
 type ZBDWebhookPayload struct {
 	ID          string `json:"id"`

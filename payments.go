@@ -23,6 +23,9 @@ type PaymentProvider interface {
 	// VerifyPayment checks if a payment has been completed
 	VerifyPayment(ctx context.Context, paymentHash string) (*PaymentVerification, error)
 
+	// CheckExistingPayments checks for any existing payments for a pubkey and returns verification if paid
+	CheckExistingPayments(ctx context.Context, pubkey string) (*PaymentVerification, error)
+
 	// GetProviderName returns the name of the payment provider
 	GetProviderName() string
 }
@@ -98,7 +101,7 @@ func New(config Config) (*System, error) {
 	}
 
 	// Parse access duration
-	accessDuration := calculateExpirationTime(config.AccessDuration).Sub(time.Now())
+	accessDuration := time.Until(calculateExpirationTime(config.AccessDuration))
 
 	// Initialize storage first
 	paidAccessStorage := NewPaidAccessStorage(config.PaidAccessFile)
@@ -239,34 +242,24 @@ func (s *System) RejectEventHandler(ctx context.Context, event *nostr.Event) (bo
 	// Check if there are any existing payments for this pubkey that might have been paid
 	log.Printf("🔍 Checking for existing payments for pubkey: %s...", event.PubKey[:16])
 
-	// For ZBD provider, check stored payment hashes for this specific pubkey
-	if zbdProvider, ok := s.provider.(*ZBDProvider); ok {
-		zbdProvider.mu.RLock()
-		for paymentHash, storedPubkey := range zbdProvider.pubkeyMap {
-			if storedPubkey == event.PubKey {
-				log.Printf("🔍 Found payment for this pubkey - checking hash: %s", paymentHash)
-				verification, err := zbdProvider.VerifyPayment(ctx, paymentHash)
-				if err == nil && verification.Paid {
-					log.Printf("💰 Found paid invoice! Granting access for pubkey: %s...", event.PubKey[:16])
-					// Grant access
-					err = s.paidAccessStorage.AddPaidAccess(
-						event.PubKey,
-						verification.PaymentHash,
-						verification.Amount,
-						s.accessDuration,
-					)
-					if err != nil {
-						log.Printf("❌ Failed to add paid access: %v", err)
-					} else {
-						log.Printf("✅ Successfully granted access to pubkey: %s...", event.PubKey[:16])
-						atomic.AddUint64(&s.successfulPayments, 1)
-						zbdProvider.mu.RUnlock()
-						return false, "" // Allow the event
-					}
-				}
-			}
+	// Check for existing payments using the provider interface
+	verification, err := s.provider.CheckExistingPayments(ctx, event.PubKey)
+	if err == nil && verification != nil && verification.Paid {
+		log.Printf("💰 Found paid invoice! Granting access for pubkey: %s...", event.PubKey[:16])
+		// Grant access
+		err = s.paidAccessStorage.AddPaidAccess(
+			event.PubKey,
+			verification.PaymentHash,
+			verification.Amount,
+			s.accessDuration,
+		)
+		if err != nil {
+			log.Printf("❌ Failed to add paid access: %v", err)
+		} else {
+			log.Printf("✅ Successfully granted access to pubkey: %s...", event.PubKey[:16])
+			atomic.AddUint64(&s.successfulPayments, 1)
+			return false, "" // Allow the event
 		}
-		zbdProvider.mu.RUnlock()
 	}
 
 	// User hasn't paid, reject with payment request

@@ -8,3 +8,4 @@ data*
 khatru-payments
 example/client/test-keypair.txt
 example/client/test-client
+*.txt
