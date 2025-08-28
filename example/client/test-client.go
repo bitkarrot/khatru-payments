@@ -244,8 +244,8 @@ func connectAndTest() {
 	npub, _ := nip19.EncodePublicKey(testPK)
 	fmt.Printf("  Test pubkey: %s\n", npub)
 
-	// Connect to relay
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Connect to relay with longer timeout for payment operations
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
 	relay, err := nostr.RelayConnect(ctx, RelayWSURL)
@@ -434,8 +434,8 @@ func waitForManualPaymentAndRetry(relay *nostr.Relay, event *nostr.Event, pk, sk
 
 	fmt.Println("\n🔄 Retrying event publication after payment...")
 
-	// Create a new context for the retry
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Create a new context for the retry with longer timeout for payment verification
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
 	// Create a new test event to verify write access
