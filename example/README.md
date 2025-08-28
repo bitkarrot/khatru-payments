@@ -2,6 +2,9 @@
 
 Build the Relay
 
+- Configure the relay using the .env.example
+- Payment data and expiration are stored in the "data" directory, in two files: charge_mappings.json and paid_access.json
+
 ```sh
  go build -o example-relay example-relay.go
 ```
