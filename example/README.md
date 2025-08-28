@@ -13,11 +13,11 @@ Run the client
  
  # Run the relay server
  
-cd /Users/bk/github/khatru-payments/example
+cd khatru-payments/example
 go run -tags=relay relay/example-relay.go
 
 # Run the test client (in another terminal)
-cd /Users/bk/github/khatru-payments/example  
+cd khatru-payments/example  
 go run -tags=client client/test-client.go stats
 go run -tags=client client/test-client.go connect
 go run -tags=client client/test-client.go test-payment
